@@ -33,5 +33,8 @@ export const env = {
   // Cache TTL (milliseconds)
   cacheTtlCurrent: parseInt(process.env.CACHE_TTL_CURRENT || '300000', 10), // 5 minutes
   cacheTtlForecast: parseInt(process.env.CACHE_TTL_FORECAST || '1800000', 10), // 30 minutes
+  
+  // Frontend path (for serving static files in production)
+  frontendDistPath: process.env.FRONTEND_DIST_PATH || '',
 };
 

@@ -2,7 +2,6 @@ import { Router, Request, Response, NextFunction } from 'express';
 import passport from 'passport';
 import { z } from 'zod';
 import { registerUser, formatUserResponse } from '../services/authService.js';
-import { createError } from '../middleware/errorHandler.js';
 import { env } from '../config/env.js';
 import { IUser } from '../models/User.js';
 
@@ -53,7 +52,12 @@ router.post('/login', (req: Request, res: Response, next: NextFunction) => {
     }
     
     if (!user) {
-      return next(createError(info?.message || 'Invalid credentials', 401));
+      // Return 401 directly without throwing - this is expected behavior, not an error
+      res.status(401).json({ 
+        error: 'Unauthorized', 
+        message: info?.message || 'Invalid credentials' 
+      });
+      return;
     }
     
     req.login(user, (err) => {

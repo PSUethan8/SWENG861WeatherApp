@@ -97,7 +97,12 @@ async function main() {
 
   // Serve frontend in production
   if (env.isProduction) {
-    const frontendPath = path.resolve(__dirname, '../../frontend/dist');
+    // Use configured path or default relative path
+    const frontendPath = env.frontendDistPath 
+      ? path.resolve(env.frontendDistPath)
+      : path.resolve(__dirname, '../frontend/dist');
+    
+    logger.info(`Serving frontend from: ${frontendPath}`);
     app.use(express.static(frontendPath));
     
     // SPA fallback
