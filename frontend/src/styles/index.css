@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: #0ea5e9;
+  --color-secondary: #7c3aed;
+}
+
+@layer base {
+  html {
+    font-family: 'Outfit', system-ui, sans-serif;
+  }
+  
+  body {
+    @apply bg-storm-950 text-white antialiased;
+    background-image: 
+      radial-gradient(ellipse at 20% 0%, rgba(14, 165, 233, 0.15) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 100%, rgba(124, 58, 237, 0.1) 0%, transparent 50%);
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-6 py-3 rounded-xl font-medium transition-all duration-200 
+           disabled:opacity-50 disabled:cursor-not-allowed
+           focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-storm-900;
+  }
+  
+  .btn-primary {
+    @apply btn bg-gradient-to-r from-sky-500 to-sky-600 text-white 
+           hover:from-sky-400 hover:to-sky-500 
+           focus:ring-sky-500 shadow-lg shadow-sky-500/25;
+  }
+  
+  .btn-secondary {
+    @apply btn bg-storm-800 text-white border border-storm-700
+           hover:bg-storm-700 focus:ring-storm-500;
+  }
+  
+  .btn-google {
+    @apply btn bg-white text-storm-900 
+           hover:bg-gray-100 focus:ring-gray-300
+           flex items-center justify-center gap-3;
+  }
+  
+  .input {
+    @apply w-full px-4 py-3 rounded-xl bg-storm-800/50 border border-storm-700
+           text-white placeholder-storm-400
+           focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500
+           transition-all duration-200;
+  }
+  
+  .card {
+    @apply bg-storm-900/50 backdrop-blur-xl rounded-2xl border border-storm-800
+           shadow-xl shadow-black/20;
+  }
+  
+  .glass {
+    @apply bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-sky-400 to-purple-400 bg-clip-text text-transparent;
+  }
+  
+  .animate-delay-100 {
+    animation-delay: 100ms;
+  }
+  
+  .animate-delay-200 {
+    animation-delay: 200ms;
+  }
+  
+  .animate-delay-300 {
+    animation-delay: 300ms;
+  }
+  
+  .animate-delay-400 {
+    animation-delay: 400ms;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-storm-900;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-storm-700 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-storm-600;
+}
+

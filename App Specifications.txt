@@ -1,0 +1,564 @@
+Here’s a compact but fairly complete spec you can hand to someone and they’ll know what to build.
+
+---
+
+## 1. High-level overview
+
+**App:** Simple Weather Forecasting Web App
+**Goal:** Authenticated users can log in and see a weather forecast for selected locations, powered by the OpenWeatherMap (OWM) API, with server-side caching to avoid API abuse.
+
+**Key requirements:**
+
+* Monolithic repo:
+
+  * Backend in `./backend`
+  * Frontend in `./frontend`
+* Runtime: **Node.js**
+* Frontend: **React + Vite**
+* Weather data: **OpenWeatherMap API** (server-side only)
+* Caching + updating logic to minimize OWM calls
+* Auth required to view forecasts:
+
+  * Local username/password
+  * Google OAuth login
+* Persistent storage:
+
+  * Use **MongoDB** for:
+
+    * Users
+    * Weather cache
+
+---
+
+## 2. Tech stack
+
+### Backend (`./backend`)
+
+* **Node.js** (LTS, e.g. 20.x)
+* **Express** – HTTP server + routing
+* **Mongoose** – MongoDB ODM
+* **Passport.js** – authentication
+
+  * `passport-local` for email/password
+  * `passport-google-oauth20` for Google login
+* **express-session** – server-side sessions
+* **connect-mongo** – session store in MongoDB
+* **axios** or **node-fetch** – calling OpenWeatherMap API
+* **express-rate-limit** – basic rate limiting (per IP/per user)
+* **dotenv** – environment variables
+* **Joi** or **Zod** – request validation (optional but recommended)
+* **cors**, **helmet**, **morgan** – CORS, security headers, logging
+
+### Frontend (`./frontend`)
+
+* **Vite** – bundler
+* **React** – UI
+* **TypeScript** (optional but recommended)
+* **React Router** – client routing
+* **Axios** or `fetch` – API client
+* **Tailwind CSS** – styling (or simple CSS modules if you prefer)
+
+### Infra / Dev tooling
+
+* **MongoDB** – primary database
+* Root `package.json` with scripts to run backend & frontend (optionally via `concurrently`).
+
+---
+
+## 3. Directory structure
+
+```text
+project-root/
+  package.json
+  .env
+  backend/
+    package.json
+    src/
+      index.ts (or index.js)
+      config/
+        env.ts
+        db.ts
+        passport.ts
+      middleware/
+        authRequired.ts
+        errorHandler.ts
+      models/
+        User.ts
+        WeatherCache.ts
+      routes/
+        auth.ts
+        weather.ts
+        user.ts
+      services/
+        weatherService.ts
+        authService.ts
+      utils/
+        logger.ts
+  frontend/
+    package.json
+    index.html
+    src/
+      main.tsx
+      App.tsx
+      routes/
+        LoginPage.tsx
+        RegisterPage.tsx
+        DashboardPage.tsx
+      components/
+        Layout.tsx
+        Navbar.tsx
+        WeatherSearch.tsx
+        WeatherCard.tsx
+        Loader.tsx
+      lib/
+        apiClient.ts
+        auth.ts
+      styles/
+        index.css (or Tailwind setup)
+```
+
+---
+
+## 4. Backend design
+
+### 4.1 Environment variables
+
+Defined in `backend/.env` (never committed):
+
+* `PORT` – backend port, e.g. `4000`
+* `MONGODB_URI` – Mongo connection string
+* `SESSION_SECRET` – session secret for `express-session`
+* `OPENWEATHERMAP_API_KEY` – OWM API key
+* `GOOGLE_CLIENT_ID`
+* `GOOGLE_CLIENT_SECRET`
+* `GOOGLE_CALLBACK_URL` – e.g. `http://localhost:4000/auth/google/callback`
+* `FRONTEND_ORIGIN` – e.g. `http://localhost:5173`
+
+### 4.2 Express app setup
+
+* Enable JSON body parsing
+* Enable CORS (only from `FRONTEND_ORIGIN`)
+* Configure sessions + Passport
+* Mount routes under `/auth`, `/api/weather`, `/api/user`
+* Serve `frontend/dist` as static in production
+
+### 4.3 Data models (MongoDB via Mongoose)
+
+#### User model (`User`)
+
+Fields:
+
+* `_id: ObjectId`
+* `email: string` (unique, required)
+* `passwordHash?: string` (for local auth, required if no Google ID)
+* `googleId?: string` (for Google OAuth users)
+* `displayName?: string`
+* `createdAt: Date`
+* `updatedAt: Date`
+
+Indexes:
+
+* Unique index on `email`
+* Unique index on `googleId` (sparse)
+
+#### WeatherCache model (`WeatherCache`)
+
+Goal: store responses from OWM per normalized location and type.
+
+Fields:
+
+* `_id: ObjectId`
+* `locationKey: string`
+
+  * A normalized key combining type + value, e.g. `city:London,GB` or `coords:40.7,-73.9`
+* `type: "current" | "forecast"`
+* `queryParams: object` – whatever was used (city name, coordinates, units)
+* `data: object` – raw OWM API response (JSON)
+* `fetchedAt: Date` – when we fetched it
+* `expiresAt: Date` – TTL-based expiration
+
+Indexes:
+
+* Index on `locationKey` + `type`
+* TTL index on `expiresAt` (optional, if you want auto-expiry from Mongo)
+
+### 4.4 Authentication
+
+#### Session-based auth
+
+* Use `express-session` with `connect-mongo` as store
+* Passport handles user serialize/deserialize:
+
+  * `serializeUser(user._id)`
+  * `deserializeUser(id) → User`
+
+#### Local strategy
+
+Routes:
+
+* `POST /auth/register`
+
+  * Payload: `{ email, password, displayName }`
+  * Validate inputs
+  * Hash password with `bcrypt`
+  * Create user
+  * Auto-login or require manual login (your choice; spec: auto-login for UX)
+
+* `POST /auth/login`
+
+  * Payload: `{ email, password }`
+  * Passport local strategy validates
+  * On success, session established; returns basic user info
+
+* `POST /auth/logout`
+
+  * Destroys session
+
+#### Google OAuth
+
+Routes:
+
+* `GET /auth/google`
+
+  * Redirect to Google with scopes `email`, `profile`
+* `GET /auth/google/callback`
+
+  * Passport Google strategy:
+
+    * If user with `googleId` exists → use it
+    * Else if user with same email exists → attach `googleId` to that user
+    * Else → create new user
+  * On success: set session, then redirect to frontend, e.g. `FRONTEND_ORIGIN + "/dashboard"`
+
+### 4.5 Authorization middleware
+
+`authRequired` middleware:
+
+* Checks `req.isAuthenticated()` (Passport)
+* If not authenticated:
+
+  * For API requests: return 401 JSON `{ error: "Unauthorized" }`
+  * For HTML/static: optional redirect to login page (mainly for server-side pages)
+
+Attach to any routes needing auth (e.g. `/api/weather`).
+
+### 4.6 Weather API & caching
+
+#### Endpoint design
+
+`GET /api/weather`
+
+Query params (pick your supported options):
+
+* `locationType=city|coords|zip` (default `city`)
+* `city` – e.g. `London,GB`
+* `lat`, `lon` – for `coords`
+* `zip` – for `zip`
+* `units=metric|imperial` (default `metric`)
+* `type=current|forecast` (default `current`)
+
+Rules:
+
+* Requires authentication (`authRequired`)
+* Normalizes query to a `locationKey`, e.g.:
+
+  * `current:city:London,GB:metric`
+  * `forecast:coords:40.7,-73.9:metric`
+
+#### Caching policy
+
+Configurable constants (in code/env):
+
+* `CACHE_TTL_CURRENT = 5 * 60 * 1000` (5 minutes)
+* `CACHE_TTL_FORECAST = 30 * 60 * 1000` (30 minutes)
+
+Algorithm:
+
+1. Compute `locationKey`, `type`, `units`.
+2. Look up `WeatherCache` with `locationKey` + `type`.
+3. If found **and** `expiresAt > now`:
+
+   * Return cached `data`.
+4. Else:
+
+   * Call OpenWeatherMap API from backend using `OPENWEATHERMAP_API_KEY`.
+   * On success:
+
+     * Upsert `WeatherCache` record with new `data`, `fetchedAt = now`, `expiresAt = now + TTL`.
+     * Return `data`.
+
+**Important:**
+The frontend **never** calls OWM directly; it always calls the backend. The OWM API key is only present server-side.
+
+#### OpenWeatherMap endpoints
+
+For spec purposes, use:
+
+* Current weather: `https://api.openweathermap.org/data/2.5/weather`
+* Forecast (5-day/3-hour): `https://api.openweathermap.org/data/2.5/forecast`
+
+Parameters:
+
+* `q` for city
+* or `lat`, `lon`
+* or `zip`
+* `appid` for API key
+* `units` for units
+
+#### Abuse / rate limiting
+
+Add two layers:
+
+1. **Per-user / per-IP rate limit** with `express-rate-limit`:
+
+   * E.g., max 60 requests per 10 minutes per IP for `/api/weather` routes.
+2. **Cache-first logic**: ensures repeated queries for same location within TTL do **not** call OWM.
+
+Optionally, add a simple **server-side dedup**:
+
+* If a request triggers an OWM call for a location currently being fetched, queue/await that promise instead of calling again.
+
+---
+
+## 5. Frontend design
+
+### 5.1 App routes
+
+Using React Router:
+
+* `/login`
+* `/register`
+* `/dashboard` (requires auth)
+* `*` – fallback 404 or redirect to `/dashboard` if logged in, else `/login`
+
+### 5.2 Auth handling
+
+Auth strategy: **cookie-based sessions**
+
+* Backend sets `Set-Cookie` for session; frontend uses `withCredentials` when calling APIs.
+* On app load:
+
+  * Call `GET /api/user/me`:
+
+    * If 200 → set user in React state, mark `isAuthenticated = true`.
+    * If 401 → redirect to `/login`.
+
+Endpoints:
+
+* `GET /api/user/me`
+
+  * Returns `{ id, email, displayName }` if logged in.
+
+Frontend API client:
+
+* `axios.create({ baseURL: BACKEND_URL, withCredentials: true })`
+
+### 5.3 Pages & components
+
+#### LoginPage
+
+* Email/password form
+* Calls `POST /auth/login`
+* On success: navigate to `/dashboard`
+* Button “Continue with Google” linking to `BACKEND_URL/auth/google`
+
+#### RegisterPage
+
+* Email, password, confirm password, (optional) displayName
+* Calls `POST /auth/register`
+* On success: auto-login or redirect to `/login` depending on backend behavior
+
+#### DashboardPage
+
+* Protected route:
+
+  * Only render if `isAuthenticated`, else redirect to `/login`
+* Contains:
+
+  * Search input(s): city or lat/lon or zip
+  * Units toggle (metric/imperial)
+  * On submit:
+
+    * Call `GET /api/weather?...`
+    * Show loading and then results
+* Display:
+
+  * Current weather card
+  * Forecast list (e.g. next 5 days / 3-hour intervals simplified into daily highs/lows)
+
+Components:
+
+* `Navbar`
+
+  * Shows app name
+  * Shows logged-in user’s email/name
+  * Logout button calling `POST /auth/logout`
+* `WeatherSearch`
+
+  * Form with location inputs + units
+* `WeatherCard`
+
+  * Displays location, temperature, description, icon, etc.
+* `ForecastList` (optional)
+
+  * Shows upcoming time slots or per-day summary
+
+### 5.4 Styling
+
+* Tailwind CSS via Vite plugin:
+
+  * Basic responsive layout
+  * Light theme only (for simplicity)
+* Emphasis on clarity over complexity.
+
+---
+
+## 6. API contract (examples)
+
+### 6.1 `POST /auth/register`
+
+**Request body:**
+
+```json
+{
+  "email": "user@example.com",
+  "password": "secret123",
+  "displayName": "Alice"
+}
+```
+
+**Response 201:**
+
+```json
+{
+  "user": {
+    "id": "650f...",
+    "email": "user@example.com",
+    "displayName": "Alice"
+  }
+}
+```
+
+### 6.2 `POST /auth/login`
+
+**Request body:**
+
+```json
+{
+  "email": "user@example.com",
+  "password": "secret123"
+}
+```
+
+**Response 200:**
+
+```json
+{
+  "user": {
+    "id": "650f...",
+    "email": "user@example.com",
+    "displayName": "Alice"
+  }
+}
+```
+
+Session cookie is set on the response.
+
+### 6.3 `GET /api/user/me`
+
+**Response 200:**
+
+```json
+{
+  "id": "650f...",
+  "email": "user@example.com",
+  "displayName": "Alice"
+}
+```
+
+or **401** if not authenticated.
+
+### 6.4 `GET /api/weather?locationType=city&city=London,GB&type=current&units=metric`
+
+**Response 200:** (simplified; structure mirrors OWM with possible extra wrapper)
+
+```json
+{
+  "source": "cache", // or "live"
+  "fetchedAt": "2025-01-01T12:00:00.000Z",
+  "data": {
+    "coord": { "lon": -0.13, "lat": 51.51 },
+    "weather": [
+      {
+        "id": 300,
+        "main": "Drizzle",
+        "description": "light intensity drizzle",
+        "icon": "09d"
+      }
+    ],
+    "main": {
+      "temp": 280.32,
+      "feels_like": 278.0,
+      "temp_min": 279.15,
+      "temp_max": 281.15
+    },
+    "name": "London"
+    // ...
+  }
+}
+```
+
+---
+
+## 7. Security & production considerations
+
+* Restrict CORS to your frontend origin.
+* Set secure cookie flags (`secure`, `httpOnly`, `sameSite`) appropriately in production.
+* Do not expose `OPENWEATHERMAP_API_KEY` to the frontend. All weather requests go through backend.
+* Store secrets in environment variables, not in code.
+* Configure logging and error handling:
+
+  * Central error handler in Express
+  * Don’t leak stack traces in production.
+
+---
+
+## 8. Dev & build workflow
+
+### Backend
+
+* `cd backend`
+* `npm install`
+* `npm run dev` (e.g. using `nodemon`)
+
+### Frontend
+
+* `cd frontend`
+* `npm install`
+* `npm run dev` (Vite dev server)
+
+### Root (optional)
+
+Root `package.json` scripts:
+
+```json
+{
+  "scripts": {
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "build": "cd frontend && npm run build && cd ../backend && npm run build",
+    "start": "cd backend && npm start"
+  }
+}
+```
+
+In production:
+
+* Build frontend (`frontend/dist`)
+* Backend serves static files from `../frontend/dist`
+* Single monolithic deployable (Node server + static assets + Mongo).
+
+---
+
+If you’d like, I can next turn this spec into a concrete checklist or initial code skeletons for `backend/src/index.ts` and `frontend/src/App.tsx`.
