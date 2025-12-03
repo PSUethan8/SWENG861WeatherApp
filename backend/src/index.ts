@@ -27,6 +27,11 @@ async function main() {
 
   const app = express();
 
+  // Trust proxy - required for secure cookies behind Azure/reverse proxy
+  if (env.isProduction) {
+    app.set('trust proxy', 1);
+  }
+
   // Security middleware
   app.use(helmet({
     contentSecurityPolicy: env.isProduction ? undefined : false,
@@ -58,7 +63,7 @@ async function main() {
     cookie: {
       secure: env.isProduction,
       httpOnly: true,
-      sameSite: env.isProduction ? 'strict' : 'lax',
+      sameSite: 'lax', // 'lax' works better with proxies and redirects
       maxAge: 24 * 60 * 60 * 1000, // 1 day
     },
   }));
